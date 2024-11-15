@@ -7,219 +7,209 @@ from .misc import is_seq_of
 
 
 def build_from_cfg(cfg, registry, default_args=None):
-    """Build a module from configs dict.
+    """설정 딕셔너리를 사용해 모듈을 생성하는 함수.
 
     Args:
-        cfg (dict): Config dict. It should at least contain the key "type".
-        registry (:obj:`Registry`): The registry to search the type from.
-        default_args (dict, optional): Default initialization arguments.
+        cfg (dict): 설정 딕셔너리로, 최소 "type" 키를 포함해야 함.
+        registry (:obj:`Registry`): 모듈을 검색할 레지스트리.
+        default_args (dict, optional): 기본 초기화 인자.
 
     Returns:
-        object: The constructed object.
+        object: 생성된 객체.
     """
     if not isinstance(cfg, dict):
-        raise TypeError(f"cfg must be a dict, but got {type(cfg)}")
+        raise TypeError(f"cfg는 딕셔너리여야 합니다, 그러나 {type(cfg)}를 받았습니다.")  # cfg가 딕셔너리가 아니면 오류 발생
     if "type" not in cfg:
         if default_args is None or "type" not in default_args:
             raise KeyError(
-                '`cfg` or `default_args` must contain the key "type", '
-                f"but got {cfg}\n{default_args}"
-            )
+                '`cfg` 또는 `default_args`에 "type" 키가 있어야 합니다, '
+                f"그러나 {cfg}\n{default_args}를 받았습니다."
+            )  # type이 없으면 오류 발생
     if not isinstance(registry, Registry):
         raise TypeError(
-            "registry must be an mmcv.Registry object, " f"but got {type(registry)}"
-        )
+            "registry는 mmcv.Registry 객체여야 합니다, " f"그러나 {type(registry)}를 받았습니다."
+        )  # registry가 Registry 객체인지 확인
     if not (isinstance(default_args, dict) or default_args is None):
         raise TypeError(
-            "default_args must be a dict or None, " f"but got {type(default_args)}"
-        )
+            "default_args는 딕셔너리 또는 None이어야 합니다, " f"그러나 {type(default_args)}를 받았습니다."
+        )  # default_args가 None 또는 dict인지 확인
 
-    args = cfg.copy()
+    args = cfg.copy()  # 설정 딕셔너리를 복사하여 인자로 사용
 
     if default_args is not None:
         for name, value in default_args.items():
-            args.setdefault(name, value)
+            args.setdefault(name, value)  # 기본 인자가 없을 경우 default_args를 설정
 
-    obj_type = args.pop("type")
+    obj_type = args.pop("type")  # type 키를 사용하여 객체의 클래스를 가져옴
     if isinstance(obj_type, str):
         obj_cls = registry.get(obj_type)
         if obj_cls is None:
-            raise KeyError(f"{obj_type} is not in the {registry.name} registry")
+            raise KeyError(f"{obj_type}는 {registry.name} 레지스트리에 없습니다")  # 레지스트리에 type이 없는 경우 오류
     elif inspect.isclass(obj_type):
-        obj_cls = obj_type
+        obj_cls = obj_type  # obj_type이 클래스인 경우 그대로 사용
     else:
-        raise TypeError(f"type must be a str or valid type, but got {type(obj_type)}")
+        raise TypeError(f"type은 문자열 또는 유효한 타입이어야 합니다, 그러나 {type(obj_type)}를 받았습니다.")
     try:
-        return obj_cls(**args)
+        return obj_cls(**args)  # 인자를 사용하여 객체를 생성 후 반환
     except Exception as e:
-        # Normal TypeError does not print class name.
+        # 일반적인 TypeError는 클래스 이름을 출력하지 않으므로 예외를 수정하여 발생시킴
         raise type(e)(f"{obj_cls.__name__}: {e}")
 
 
 class Registry:
-    """A registry to map strings to classes.
+    """문자열을 클래스에 매핑하는 레지스트리.
 
-    Registered object could be built from registry.
-    Example:
+    레지스트리에 등록된 객체는 해당 객체를 생성할 수 있습니다.
+    예제:
         >>> MODELS = Registry('models')
         >>> @MODELS.register_module()
         >>> class ResNet:
         >>>     pass
         >>> resnet = MODELS.build(dict(type='ResNet'))
 
-    Please refer to
-    https://mmcv.readthedocs.io/en/latest/understand_mmcv/registry.html for
-    advanced usage.
+    고급 사용법은 다음을 참조하십시오:
+    https://mmcv.readthedocs.io/en/latest/understand_mmcv/registry.html
 
     Args:
-        name (str): Registry name.
-        build_func(func, optional): Build function to construct instance from
-            Registry, func:`build_from_cfg` is used if neither ``parent`` or
-            ``build_func`` is specified. If ``parent`` is specified and
-            ``build_func`` is not given,  ``build_func`` will be inherited
-            from ``parent``. Default: None.
-        parent (Registry, optional): Parent registry. The class registered in
-            children registry could be built from parent. Default: None.
-        scope (str, optional): The scope of registry. It is the key to search
-            for children registry. If not specified, scope will be the name of
-            the package where class is defined, e.g. mmdet, mmcls, mmseg.
-            Default: None.
+        name (str): 레지스트리 이름.
+        build_func(func, optional): 레지스트리에서 인스턴스를 생성하는 빌드 함수. 기본값은 `build_from_cfg` 사용.
+        parent (Registry, optional): 상위 레지스트리. 부모 레지스트리에서 하위 레지스트리에 등록된 클래스를 생성할 수 있음.
+        scope (str, optional): 레지스트리의 범위로, 하위 레지스트리를 검색하는 키 역할을 함.
     """
 
     def __init__(self, name, build_func=None, parent=None, scope=None):
-        self._name = name
-        self._module_dict = dict()
-        self._children = dict()
-        self._scope = self.infer_scope() if scope is None else scope
+        self._name = name  # 레지스트리 이름 설정
+        self._module_dict = dict()  # 모듈을 저장할 딕셔너리 초기화
+        self._children = dict()  # 하위 레지스트리 저장할 딕셔너리 초기화
+        self._scope = self.infer_scope() if scope is None else scope  # 범위 설정
 
-        # self.build_func will be set with the following priority:
-        # 1. build_func
-        # 2. parent.build_func
-        # 3. build_from_cfg
+        # self.build_func은 아래 우선순위에 따라 설정됨:
+        # 1. 지정된 build_func
+        # 2. 부모 레지스트리의 build_func
+        # 3. 기본 build_from_cfg 사용
         if build_func is None:
             if parent is not None:
-                self.build_func = parent.build_func
+                self.build_func = parent.build_func  # 부모의 build_func 사용
             else:
                 self.build_func = build_from_cfg
         else:
             self.build_func = build_func
         if parent is not None:
-            assert isinstance(parent, Registry)
-            parent._add_children(self)
+            assert isinstance(parent, Registry)  # 부모가 Registry인지 확인
+            parent._add_children(self)  # 부모에 현재 레지스트리를 하위로 추가
             self.parent = parent
         else:
             self.parent = None
 
     def __len__(self):
-        return len(self._module_dict)
+        return len(self._module_dict)  # 레지스트리 내 모듈 수 반환
 
     def __contains__(self, key):
-        return self.get(key) is not None
+        return self.get(key) is not None  # 주어진 키가 레지스트리에 있는지 확인
 
     def __repr__(self):
         format_str = (
             self.__class__.__name__ + f"(name={self._name}, "
             f"items={self._module_dict})"
         )
-        return format_str
+        return format_str  # 레지스트리의 문자열 표현 반환
 
     @staticmethod
     def infer_scope():
-        """Infer the scope of registry.
+        """레지스트리의 범위를 추론하는 함수.
 
-        The name of the package where registry is defined will be returned.
+        레지스트리가 정의된 패키지의 이름을 반환합니다.
 
-        Example:
-            # in mmdet/models/backbone/resnet.py
+        예제:
+            # mmdet/models/backbone/resnet.py 파일 내
             >>> MODELS = Registry('models')
             >>> @MODELS.register_module()
             >>> class ResNet:
             >>>     pass
-            The scope of ``ResNet`` will be ``mmdet``.
+            ResNet 클래스의 범위는 "mmdet"이 됩니다.
 
 
         Returns:
-            scope (str): The inferred scope name.
+            scope (str): 추론된 범위 이름.
         """
-        # inspect.stack() trace where this function is called, the index-2
-        # indicates the frame where `infer_scope()` is called
+        # inspect.stack()으로 호출된 위치를 추적하며, index-2는 infer_scope()가 호출된 프레임을 의미
         filename = inspect.getmodule(inspect.stack()[2][0]).__name__
         split_filename = filename.split(".")
-        return split_filename[0]
+        return split_filename[0]  # 첫 번째 부분을 반환하여 범위 이름으로 사용
 
     @staticmethod
     def split_scope_key(key):
-        """Split scope and key.
+        """범위와 키를 분리하는 함수.
 
-        The first scope will be split from key.
+        첫 번째 범위를 키에서 분리합니다.
 
-        Examples:
+        예제:
             >>> Registry.split_scope_key('mmdet.ResNet')
             'mmdet', 'ResNet'
             >>> Registry.split_scope_key('ResNet')
             None, 'ResNet'
 
         Return:
-            scope (str, None): The first scope.
-            key (str): The remaining key.
+            scope (str, None): 첫 번째 범위.
+            key (str): 남은 키.
         """
         split_index = key.find(".")
         if split_index != -1:
-            return key[:split_index], key[split_index + 1 :]
+            return key[:split_index], key[split_index + 1 :]  # 범위와 나머지 키 반환
         else:
-            return None, key
+            return None, key  # 범위가 없는 경우 None과 키 반환
 
     @property
     def name(self):
-        return self._name
+        return self._name  # 레지스트리 이름 반환
 
     @property
     def scope(self):
-        return self._scope
+        return self._scope  # 레지스트리 범위 반환
 
     @property
     def module_dict(self):
-        return self._module_dict
+        return self._module_dict  # 등록된 모듈 딕셔너리 반환
 
     @property
     def children(self):
-        return self._children
+        return self._children  # 하위 레지스트리 반환
 
     def get(self, key):
-        """Get the registry record.
+        """레지스트리에 등록된 객체를 가져오는 함수.
 
         Args:
-            key (str): The class name in string format.
+            key (str): 문자열 형식의 클래스 이름.
 
         Returns:
-            class: The corresponding class.
+            class: 해당 클래스.
         """
         scope, real_key = self.split_scope_key(key)
         if scope is None or scope == self._scope:
-            # get from self
+            # 현재 레지스트리에서 검색
             if real_key in self._module_dict:
                 return self._module_dict[real_key]
         else:
-            # get from self._children
+            # 하위 레지스트리에서 검색
             if scope in self._children:
                 return self._children[scope].get(real_key)
             else:
-                # goto root
+                # 최상위 레지스트리에서 검색
                 parent = self.parent
                 while parent.parent is not None:
                     parent = parent.parent
                 return parent.get(key)
 
     def build(self, *args, **kwargs):
-        return self.build_func(*args, **kwargs, registry=self)
+        return self.build_func(*args, **kwargs, registry=self)  # build 함수 호출
 
     def _add_children(self, registry):
-        """Add children for a registry.
+        """레지스트리에 하위 레지스트리를 추가하는 함수.
 
-        The ``registry`` will be added as children based on its scope.
-        The parent registry could build objects from children registry.
+        지정된 레지스트리를 범위에 따라 하위로 추가합니다.
+        부모 레지스트리에서 하위 레지스트리의 객체를 생성할 수 있게 합니다.
 
-        Example:
+        예제:
             >>> models = Registry('models')
             >>> mmdet_models = Registry('models', parent=models)
             >>> @mmdet_models.register_module()
@@ -232,27 +222,26 @@ class Registry:
         assert registry.scope is not None
         assert (
             registry.scope not in self.children
-        ), f"scope {registry.scope} exists in {self.name} registry"
-        self.children[registry.scope] = registry
+        ), f"{self.name} 레지스트리에 이미 범위 {registry.scope}가 있습니다"
+        self.children[registry.scope] = registry  # 자식 레지스트리로 추가
 
     def _register_module(self, module_class, module_name=None, force=False):
         if not inspect.isclass(module_class):
-            raise TypeError("module must be a class, " f"but got {type(module_class)}")
+            raise TypeError("module은 클래스여야 합니다, " f"그러나 {type(module_class)}를 받았습니다.")
 
         if module_name is None:
-            module_name = module_class.__name__
+            module_name = module_class.__name__  # 이름이 없으면 클래스 이름을 사용
         if isinstance(module_name, str):
             module_name = [module_name]
         for name in module_name:
             if not force and name in self._module_dict:
-                raise KeyError(f"{name} is already registered " f"in {self.name}")
-            self._module_dict[name] = module_class
+                raise KeyError(f"{name}는 {self.name}에 이미 등록되어 있습니다")
+            self._module_dict[name] = module_class  # 모듈을 등록
 
     def deprecated_register_module(self, cls=None, force=False):
         warnings.warn(
-            "The old API of register_module(module, force=False) "
-            "is deprecated and will be removed, please use the new API "
-            "register_module(name=None, force=False, module=None) instead."
+            "기존의 register_module(module, force=False) API는 더 이상 지원되지 않으며, "
+            "새 API register_module(name=None, force=False, module=None)을 사용하십시오."
         )
         if cls is None:
             return partial(self.deprecated_register_module, force=force)
@@ -260,13 +249,12 @@ class Registry:
         return cls
 
     def register_module(self, name=None, force=False, module=None):
-        """Register a module.
+        """모듈을 등록하는 함수.
 
-        A record will be added to `self._module_dict`, whose key is the class
-        name or the specified name, and value is the class itself.
-        It can be used as a decorator or a normal function.
+        `self._module_dict`에 레코드를 추가하며, 키는 클래스 이름 또는 지정된 이름이고 값은 클래스 자체입니다.
+        데코레이터나 일반 함수로 사용할 수 있습니다.
 
-        Example:
+        예제:
             >>> backbones = Registry('backbone')
             >>> @backbones.register_module()
             >>> class ResNet:
@@ -283,32 +271,28 @@ class Registry:
             >>> backbones.register_module(ResNet)
 
         Args:
-            name (str | None): The module name to be registered. If not
-                specified, the class name will be used.
-            force (bool, optional): Whether to override an existing class with
-                the same name. Default: False.
-            module (type): Module class to be registered.
+            name (str | None): 등록할 모듈 이름. 지정하지 않으면 클래스 이름을 사용.
+            force (bool, optional): 동일 이름 클래스가 있을 경우 덮어쓸지 여부. 기본값: False.
+            module (type): 등록할 모듈 클래스.
         """
         if not isinstance(force, bool):
-            raise TypeError(f"force must be a boolean, but got {type(force)}")
-        # NOTE: This is a walkaround to be compatible with the old api,
-        # while it may introduce unexpected bugs.
+            raise TypeError(f"force는 불리언이어야 합니다, 그러나 {type(force)}를 받았습니다")
+        # 기존 API 호환성을 유지하기 위한 코드
         if isinstance(name, type):
             return self.deprecated_register_module(name, force=force)
 
-        # raise the error ahead of time
         if not (name is None or isinstance(name, str) or is_seq_of(name, str)):
             raise TypeError(
-                "name must be either of None, an instance of str or a sequence"
-                f"  of str, but got {type(name)}"
+                "name은 None이거나, str의 인스턴스 또는 str 시퀀스여야 합니다, "
+                f"그러나 {type(name)}를 받았습니다"
             )
 
-        # use it as a normal method: x.register_module(module=SomeClass)
+        # 일반 메서드로 사용: x.register_module(module=SomeClass)
         if module is not None:
             self._register_module(module_class=module, module_name=name, force=force)
             return module
 
-        # use it as a decorator: @x.register_module()
+        # 데코레이터로 사용: @x.register_module()
         def _register(cls):
             self._register_module(module_class=cls, module_name=name, force=force)
             return cls

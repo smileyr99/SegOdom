@@ -27,6 +27,11 @@ def create_ddp_model(model, *, fp16_compression=False, **kwargs):
         fp16_compression: add fp16 compression hooks to the ddp object.
             See more at https://pytorch.org/docs/stable/ddp_comm_hooks.html#torch.distributed.algorithms.ddp_comm_hooks.default_hooks.fp16_compress_hook
         kwargs: other arguments of :module:`torch.nn.parallel.DistributedDataParallel`.
+
+    DistributedDataParallel 모델을 생성하는 함수
+    여러 GPU에서 분산 학습을 가능하게 함
+    fp16 압축 등의 최적화 옵션 지원
+
     """
     if comm.get_world_size() == 1:
         return model
@@ -53,12 +58,25 @@ def worker_init_fn(worker_id, num_workers, rank, seed):
         num_workers (int): Number of workers.
         rank (int): The rank of current process.
         seed (int): The random seed to use.
+    
+    데이터로더의 워커 초기화 함수
+    각 워커마다 다른 랜덤 시드를 설정하여 데이터 로딩의 무작위성 보장    
     """
 
     worker_seed = num_workers * rank + worker_id + seed
     set_seed(worker_seed)
 
 
+
+'''
+명령줄 인자를 파싱하는 ArgumentParser 설정
+주요 설정:
+
+config 파일 경로
+GPU 개수
+분산 학습을 위한 머신 수와 랭크
+분산 학습을 위한 URL
+'''
 def default_argument_parser(epilog=None):
     parser = argparse.ArgumentParser(
         epilog=epilog
@@ -106,6 +124,11 @@ def default_argument_parser(epilog=None):
     return parser
 
 
+'''
+설정 파일을 파싱하고 관리
+설정 파일 저장 및 로드
+랜덤 시드 설정
+'''
 def default_config_parser(file_path, options):
     # config name protocol: dataset_name/model_name-exp_name
     if os.path.isfile(file_path):
@@ -128,6 +151,12 @@ def default_config_parser(file_path, options):
     return cfg
 
 
+'''
+전체적인 학습 설정을 초기화
+분산 학습을 위한 배치 사이즈 조정
+워커 수 설정
+랜덤 시드 설정
+'''
 def default_setup(cfg):
     # scalar by world size
     world_size = comm.get_world_size()

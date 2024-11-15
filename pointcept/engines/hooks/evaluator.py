@@ -21,48 +21,54 @@ from .builder import HOOKS
 @HOOKS.register_module()
 class ClsEvaluator(HookBase):
     def after_epoch(self):
+        # 에포크 종료 후 평가 설정에 따라 평가 실행
         if self.trainer.cfg.evaluate:
             self.eval()
 
     def eval(self):
+        # 평가 시작 로그 출력
         self.trainer.logger.info(">>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>")
-        self.trainer.model.eval()
+        self.trainer.model.eval()  # 모델을 평가 모드로 전환
         for i, input_dict in enumerate(self.trainer.val_loader):
+            # 입력 데이터를 GPU로 이동
             for key in input_dict.keys():
                 if isinstance(input_dict[key], torch.Tensor):
                     input_dict[key] = input_dict[key].cuda(non_blocking=True)
-            with torch.no_grad():
+            with torch.no_grad():  # 그라디언트 비활성화로 평가 수행
                 output_dict = self.trainer.model(input_dict)
-            output = output_dict["cls_logits"]
-            loss = output_dict["loss"]
-            pred = output.max(1)[1]
-            label = input_dict["category"]
+            output = output_dict["cls_logits"]  # 출력된 클래스 로짓
+            loss = output_dict["loss"]  # 손실 값
+            pred = output.max(1)[1]  # 예측 결과
+            label = input_dict["category"]  # 실제 라벨
+            # IoU와 같은 평가 지표 계산
             intersection, union, target = intersection_and_union_gpu(
                 pred,
                 label,
                 self.trainer.cfg.data.num_classes,
                 self.trainer.cfg.data.ignore_index,
             )
+            # 분산 환경에서 평가 지표 동기화
             if comm.get_world_size() > 1:
-                dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(
-                    target
-                )
+                dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(target)
+            # CPU로 데이터 이동 후 numpy 배열로 변환
             intersection, union, target = (
                 intersection.cpu().numpy(),
                 union.cpu().numpy(),
                 target.cpu().numpy(),
             )
-            # Here there is no need to sync since sync happened in dist.all_reduce
+            # 동기화 필요 없음
             self.trainer.storage.put_scalar("val_intersection", intersection)
             self.trainer.storage.put_scalar("val_union", union)
             self.trainer.storage.put_scalar("val_target", target)
             self.trainer.storage.put_scalar("val_loss", loss.item())
+            # 현재 평가 상태를 로그로 출력
             self.trainer.logger.info(
                 "Test: [{iter}/{max_iter}] "
                 "Loss {loss:.4f} ".format(
                     iter=i + 1, max_iter=len(self.trainer.val_loader), loss=loss.item()
                 )
             )
+        # 에포크 평균 성능 지표 계산
         loss_avg = self.trainer.storage.history("val_loss").avg
         intersection = self.trainer.storage.history("val_intersection").total
         union = self.trainer.storage.history("val_union").total
@@ -72,12 +78,14 @@ class ClsEvaluator(HookBase):
         m_iou = np.mean(iou_class)
         m_acc = np.mean(acc_class)
         all_acc = sum(intersection) / (sum(target) + 1e-10)
+        # mIoU, mAcc, allAcc 결과를 로그에 기록
         self.trainer.logger.info(
             "Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.".format(
                 m_iou, m_acc, all_acc
             )
         )
         for i in range(self.trainer.cfg.data.num_classes):
+            # 각 클래스의 IoU와 정확도 결과를 기록
             self.trainer.logger.info(
                 "Class_{idx}-{name} Result: iou/accuracy {iou:.4f}/{accuracy:.4f}".format(
                     idx=i,
@@ -87,16 +95,20 @@ class ClsEvaluator(HookBase):
                 )
             )
         current_epoch = self.trainer.epoch + 1
+        # Tensorboard 로그 기록
         if self.trainer.writer is not None:
             self.trainer.writer.add_scalar("val/loss", loss_avg, current_epoch)
             self.trainer.writer.add_scalar("val/mIoU", m_iou, current_epoch)
             self.trainer.writer.add_scalar("val/mAcc", m_acc, current_epoch)
             self.trainer.writer.add_scalar("val/allAcc", all_acc, current_epoch)
+        # 평가 종료 로그
         self.trainer.logger.info("<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<")
-        self.trainer.comm_info["current_metric_value"] = all_acc  # save for saver
-        self.trainer.comm_info["current_metric_name"] = "allAcc"  # save for saver
+        # 최종 성능 지표 저장
+        self.trainer.comm_info["current_metric_value"] = all_acc
+        self.trainer.comm_info["current_metric_name"] = "allAcc"
 
     def after_train(self):
+        # 훈련 종료 후 최고의 allAcc 성능 지표를 기록
         self.trainer.logger.info(
             "Best {}: {:.4f}".format("allAcc", self.trainer.best_metric_value)
         )
@@ -105,22 +117,26 @@ class ClsEvaluator(HookBase):
 @HOOKS.register_module()
 class SemSegEvaluator(HookBase):
     def after_epoch(self):
+        # 에포크가 끝난 후, 평가 설정에 따라 평가를 실행합니다.
         if self.trainer.cfg.evaluate:
             self.eval()
 
     def eval(self):
+        # 평가 시작 로그를 출력합니다.
         self.trainer.logger.info(">>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>")
-        self.trainer.model.eval()
+        self.trainer.model.eval()  # 모델을 평가 모드로 전환합니다.
         for i, input_dict in enumerate(self.trainer.val_loader):
+            # 입력 데이터를 GPU로 이동합니다.
             for key in input_dict.keys():
                 if isinstance(input_dict[key], torch.Tensor):
                     input_dict[key] = input_dict[key].cuda(non_blocking=True)
-            with torch.no_grad():
+            with torch.no_grad():  # 그라디언트를 계산하지 않고 평가를 진행합니다.
                 output_dict = self.trainer.model(input_dict)
-            output = output_dict["seg_logits"]
-            loss = output_dict["loss"]
-            pred = output.max(1)[1]
-            segment = input_dict["segment"]
+            output = output_dict["seg_logits"]  # 세그멘테이션 출력 로짓을 얻습니다.
+            loss = output_dict["loss"]  # 손실 값을 가져옵니다.
+            pred = output.max(1)[1]  # 예측 클래스를 결정합니다.
+            segment = input_dict["segment"]  # 실제 세그멘트 레이블을 가져옵니다.
+            # 원래 좌표로 매핑합니다.
             if "origin_coord" in input_dict.keys():
                 idx, _ = pointops.knn_query(
                     1,
@@ -131,22 +147,23 @@ class SemSegEvaluator(HookBase):
                 )
                 pred = pred[idx.flatten().long()]
                 segment = input_dict["origin_segment"]
+            # IoU 및 기타 지표를 계산합니다.
             intersection, union, target = intersection_and_union_gpu(
                 pred,
                 segment,
                 self.trainer.cfg.data.num_classes,
                 self.trainer.cfg.data.ignore_index,
             )
+            # 분산 환경에서 평가 지표를 동기화합니다.
             if comm.get_world_size() > 1:
-                dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(
-                    target
-                )
+                dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(target)
+            # 결과를 CPU로 이동하고 numpy 배열로 변환합니다.
             intersection, union, target = (
                 intersection.cpu().numpy(),
                 union.cpu().numpy(),
                 target.cpu().numpy(),
             )
-            # Here there is no need to sync since sync happened in dist.all_reduce
+            # 동기화가 이미 완료되었으므로 추가 동기화는 필요하지 않습니다.
             self.trainer.storage.put_scalar("val_intersection", intersection)
             self.trainer.storage.put_scalar("val_union", union)
             self.trainer.storage.put_scalar("val_target", target)
@@ -156,12 +173,14 @@ class SemSegEvaluator(HookBase):
             )
             if "origin_coord" in input_dict.keys():
                 info = "Interp. " + info
+            # 현재 평가 상태를 로그로 출력합니다.
             self.trainer.logger.info(
                 info
                 + "Loss {loss:.4f} ".format(
                     iter=i + 1, max_iter=len(self.trainer.val_loader), loss=loss.item()
                 )
             )
+        # 에포크 평균 성능 지표를 계산합니다.
         loss_avg = self.trainer.storage.history("val_loss").avg
         intersection = self.trainer.storage.history("val_intersection").total
         union = self.trainer.storage.history("val_union").total
@@ -171,11 +190,13 @@ class SemSegEvaluator(HookBase):
         m_iou = np.mean(iou_class)
         m_acc = np.mean(acc_class)
         all_acc = sum(intersection) / (sum(target) + 1e-10)
+        # mIoU, mAcc, allAcc 결과를 로그에 기록합니다.
         self.trainer.logger.info(
             "Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.".format(
                 m_iou, m_acc, all_acc
             )
         )
+        # 각 클래스별 IoU 및 정확도를 로그에 기록합니다.
         for i in range(self.trainer.cfg.data.num_classes):
             self.trainer.logger.info(
                 "Class_{idx}-{name} Result: iou/accuracy {iou:.4f}/{accuracy:.4f}".format(
@@ -186,16 +207,20 @@ class SemSegEvaluator(HookBase):
                 )
             )
         current_epoch = self.trainer.epoch + 1
+        # Tensorboard에 로그 기록을 추가합니다.
         if self.trainer.writer is not None:
             self.trainer.writer.add_scalar("val/loss", loss_avg, current_epoch)
             self.trainer.writer.add_scalar("val/mIoU", m_iou, current_epoch)
             self.trainer.writer.add_scalar("val/mAcc", m_acc, current_epoch)
             self.trainer.writer.add_scalar("val/allAcc", all_acc, current_epoch)
+        # 평가 종료 로그를 출력합니다.
         self.trainer.logger.info("<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<")
-        self.trainer.comm_info["current_metric_value"] = m_iou  # save for saver
-        self.trainer.comm_info["current_metric_name"] = "mIoU"  # save for saver
+        # 최종 성능 지표를 저장합니다.
+        self.trainer.comm_info["current_metric_value"] = m_iou
+        self.trainer.comm_info["current_metric_name"] = "mIoU"
 
     def after_train(self):
+        # 훈련 종료 후 최고의 mIoU 성능 지표를 로그에 기록합니다.
         self.trainer.logger.info(
             "Best {}: {:.4f}".format("mIoU", self.trainer.best_metric_value)
         )
@@ -204,16 +229,18 @@ class SemSegEvaluator(HookBase):
 @HOOKS.register_module()
 class InsSegEvaluator(HookBase):
     def __init__(self, segment_ignore_index=(-1,), instance_ignore_index=-1):
+        # 인스턴스 세그멘테이션 무시할 세그먼트와 인스턴스 인덱스 설정
         self.segment_ignore_index = segment_ignore_index
         self.instance_ignore_index = instance_ignore_index
 
-        self.valid_class_names = None  # update in before train
-        self.overlaps = np.append(np.arange(0.5, 0.95, 0.05), 0.25)
-        self.min_region_sizes = 100
-        self.distance_threshes = float("inf")
-        self.distance_confs = -float("inf")
+        self.valid_class_names = None  # 유효한 클래스 이름은 훈련 전에 설정됩니다.
+        self.overlaps = np.append(np.arange(0.5, 0.95, 0.05), 0.25)  # 평가에 사용할 겹침 비율
+        self.min_region_sizes = 100  # 최소 영역 크기
+        self.distance_threshes = float("inf")  # 거리 임계값
+        self.distance_confs = -float("inf")  # 거리 신뢰도 임계값
 
     def before_train(self):
+        # 훈련 시작 전에 유효한 클래스 이름을 설정합니다.
         self.valid_class_names = [
             self.trainer.cfg.data.names[i]
             for i in range(self.trainer.cfg.data.num_classes)
@@ -221,21 +248,25 @@ class InsSegEvaluator(HookBase):
         ]
 
     def after_epoch(self):
+        # 에포크 종료 후 평가 설정에 따라 평가를 실행합니다.
         if self.trainer.cfg.evaluate:
             self.eval()
 
     def associate_instances(self, pred, segment, instance):
+        # 예측 결과를 인스턴스와 연관 짓는 함수
         segment = segment.cpu().numpy()
         instance = instance.cpu().numpy()
         void_mask = np.in1d(segment, self.segment_ignore_index)
 
+        # 예측 클래스, 점수, 마스크의 일치 여부 확인
         assert (
             pred["pred_classes"].shape[0]
             == pred["pred_scores"].shape[0]
             == pred["pred_masks"].shape[0]
         )
         assert pred["pred_masks"].shape[1] == segment.shape[0] == instance.shape[0]
-        # get gt instances
+
+        # 각 클래스에 대해 GT 인스턴스를 생성합니다.
         gt_instances = dict()
         for i in range(self.trainer.cfg.data.num_classes):
             if i not in self.segment_ignore_index:
@@ -245,20 +276,20 @@ class InsSegEvaluator(HookBase):
         )
         segment_ids = segment[idx]
         for i in range(len(instance_ids)):
-            if instance_ids[i] == self.instance_ignore_index:
+            # 무시할 인덱스는 건너뜁니다.
+            if instance_ids[i] == self.instance_ignore_index or segment_ids[i] in self.segment_ignore_index:
                 continue
-            if segment_ids[i] in self.segment_ignore_index:
-                continue
-            gt_inst = dict()
-            gt_inst["instance_id"] = instance_ids[i]
-            gt_inst["segment_id"] = segment_ids[i]
-            gt_inst["dist_conf"] = 0.0
-            gt_inst["med_dist"] = -1.0
-            gt_inst["vert_count"] = counts[i]
-            gt_inst["matched_pred"] = []
+            gt_inst = dict(
+                instance_id=instance_ids[i],
+                segment_id=segment_ids[i],
+                dist_conf=0.0,
+                med_dist=-1.0,
+                vert_count=counts[i],
+                matched_pred=[],
+            )
             gt_instances[self.trainer.cfg.data.names[segment_ids[i]]].append(gt_inst)
 
-        # get pred instances and associate with gt
+        # 예측 인스턴스를 GT 인스턴스와 연관시킵니다.
         pred_instances = dict()
         for i in range(self.trainer.cfg.data.num_classes):
             if i not in self.segment_ignore_index:
@@ -267,48 +298,43 @@ class InsSegEvaluator(HookBase):
         for i in range(len(pred["pred_classes"])):
             if pred["pred_classes"][i] in self.segment_ignore_index:
                 continue
-            pred_inst = dict()
-            pred_inst["uuid"] = uuid4()
-            pred_inst["instance_id"] = instance_id
-            pred_inst["segment_id"] = pred["pred_classes"][i]
-            pred_inst["confidence"] = pred["pred_scores"][i]
-            pred_inst["mask"] = np.not_equal(pred["pred_masks"][i], 0)
-            pred_inst["vert_count"] = np.count_nonzero(pred_inst["mask"])
-            pred_inst["void_intersection"] = np.count_nonzero(
-                np.logical_and(void_mask, pred_inst["mask"])
+            pred_inst = dict(
+                uuid=uuid4(),
+                instance_id=instance_id,
+                segment_id=pred["pred_classes"][i],
+                confidence=pred["pred_scores"][i],
+                mask=np.not_equal(pred["pred_masks"][i], 0),
+                vert_count=np.count_nonzero(pred["pred_masks"][i]),
+                void_intersection=np.count_nonzero(np.logical_and(void_mask, pred["pred_masks"][i])),
             )
             if pred_inst["vert_count"] < self.min_region_sizes:
-                continue  # skip if empty
+                continue  # 최소 영역보다 작으면 건너뜁니다.
             segment_name = self.trainer.cfg.data.names[pred_inst["segment_id"]]
             matched_gt = []
-            for gt_idx, gt_inst in enumerate(gt_instances[segment_name]):
-                intersection = np.count_nonzero(
-                    np.logical_and(
-                        instance == gt_inst["instance_id"], pred_inst["mask"]
-                    )
-                )
+            for gt_inst in gt_instances[segment_name]:
+                # GT와 예측의 교차 영역 계산
+                intersection = np.count_nonzero(np.logical_and(instance == gt_inst["instance_id"], pred_inst["mask"]))
                 if intersection > 0:
-                    gt_inst_ = gt_inst.copy()
-                    pred_inst_ = pred_inst.copy()
-                    gt_inst_["intersection"] = intersection
-                    pred_inst_["intersection"] = intersection
-                    matched_gt.append(gt_inst_)
-                    gt_inst["matched_pred"].append(pred_inst_)
+                    gt_copy = gt_inst.copy()
+                    gt_copy["intersection"] = intersection
+                    pred_copy = pred_inst.copy()
+                    pred_copy["intersection"] = intersection
+                    matched_gt.append(gt_copy)
+                    gt_inst["matched_pred"].append(pred_copy)
             pred_inst["matched_gt"] = matched_gt
             pred_instances[segment_name].append(pred_inst)
             instance_id += 1
         return gt_instances, pred_instances
 
     def evaluate_matches(self, scenes):
+        # 인스턴스 매칭 결과를 평가하는 함수
         overlaps = self.overlaps
         min_region_sizes = [self.min_region_sizes]
         dist_threshes = [self.distance_threshes]
         dist_confs = [self.distance_confs]
 
-        # results: class x overlap
-        ap_table = np.zeros(
-            (len(dist_threshes), len(self.valid_class_names), len(overlaps)), float
-        )
+        # 결과 테이블 초기화: 클래스 x 겹침 비율
+        ap_table = np.zeros((len(dist_threshes), len(self.valid_class_names), len(overlaps)), float)
         for di, (min_region_size, distance_thresh, distance_conf) in enumerate(
             zip(min_region_sizes, dist_threshes, dist_confs)
         ):
@@ -329,7 +355,7 @@ class InsSegEvaluator(HookBase):
                     for scene in scenes:
                         pred_instances = scene["pred"][label_name]
                         gt_instances = scene["gt"][label_name]
-                        # filter groups in ground truth
+                        # GT 그룹 필터링
                         gt_instances = [
                             gt
                             for gt in gt_instances
@@ -345,11 +371,10 @@ class InsSegEvaluator(HookBase):
                         cur_true = np.ones(len(gt_instances))
                         cur_score = np.ones(len(gt_instances)) * (-float("inf"))
                         cur_match = np.zeros(len(gt_instances), dtype=bool)
-                        # collect matches
+                        # 매치 결과 수집
                         for gti, gt in enumerate(gt_instances):
                             found_match = False
                             for pred in gt["matched_pred"]:
-                                # greedy assignments
                                 if pred_visited[pred["uuid"]]:
                                     continue
                                 overlap = float(pred["intersection"]) / (
@@ -359,17 +384,13 @@ class InsSegEvaluator(HookBase):
                                 )
                                 if overlap > overlap_th:
                                     confidence = pred["confidence"]
-                                    # if already have a prediction for this gt,
-                                    # the prediction with the lower score is automatically a false positive
                                     if cur_match[gti]:
                                         max_score = max(cur_score[gti], confidence)
                                         min_score = min(cur_score[gti], confidence)
                                         cur_score[gti] = max_score
-                                        # append false positive
                                         cur_true = np.append(cur_true, 0)
                                         cur_score = np.append(cur_score, min_score)
                                         cur_match = np.append(cur_match, True)
-                                    # otherwise set score
                                     else:
                                         found_match = True
                                         cur_match[gti] = True
@@ -377,11 +398,9 @@ class InsSegEvaluator(HookBase):
                                         pred_visited[pred["uuid"]] = True
                             if not found_match:
                                 hard_false_negatives += 1
-                        # remove non-matched ground truth instances
                         cur_true = cur_true[cur_match]
                         cur_score = cur_score[cur_match]
 
-                        # collect non-matched predictions as false positive
                         for pred in pred_instances:
                             found_gt = False
                             for gt in pred["matched_gt"]:
@@ -398,7 +417,6 @@ class InsSegEvaluator(HookBase):
                                 for gt in pred["matched_gt"]:
                                     if gt["segment_id"] in self.segment_ignore_index:
                                         num_ignore += gt["intersection"]
-                                    # small ground truth instances
                                     if (
                                         gt["vert_count"] < min_region_size
                                         or gt["med_dist"] > distance_thresh
@@ -408,38 +426,27 @@ class InsSegEvaluator(HookBase):
                                 proportion_ignore = (
                                     float(num_ignore) / pred["vert_count"]
                                 )
-                                # if not ignored append false positive
                                 if proportion_ignore <= overlap_th:
                                     cur_true = np.append(cur_true, 0)
                                     confidence = pred["confidence"]
                                     cur_score = np.append(cur_score, confidence)
 
-                        # append to overall results
                         y_true = np.append(y_true, cur_true)
                         y_score = np.append(y_score, cur_score)
 
-                    # compute average precision
+                    # 평균 정밀도 계산
                     if has_gt and has_pred:
-                        # compute precision recall curve first
-
-                        # sorting and cumsum
                         score_arg_sort = np.argsort(y_score)
                         y_score_sorted = y_score[score_arg_sort]
                         y_true_sorted = y_true[score_arg_sort]
                         y_true_sorted_cumsum = np.cumsum(y_true_sorted)
 
-                        # unique thresholds
                         (thresholds, unique_indices) = np.unique(
                             y_score_sorted, return_index=True
                         )
                         num_prec_recall = len(unique_indices) + 1
 
-                        # prepare precision recall
                         num_examples = len(y_score_sorted)
-                        # https://github.com/ScanNet/ScanNet/pull/26
-                        # all predictions are non-matched but also all of them are ignored and not counted as FP
-                        # y_true_sorted_cumsum is empty
-                        # num_true_examples = y_true_sorted_cumsum[-1]
                         num_true_examples = (
                             y_true_sorted_cumsum[-1]
                             if len(y_true_sorted_cumsum) > 0
@@ -448,9 +455,7 @@ class InsSegEvaluator(HookBase):
                         precision = np.zeros(num_prec_recall)
                         recall = np.zeros(num_prec_recall)
 
-                        # deal with the first point
                         y_true_sorted_cumsum = np.append(y_true_sorted_cumsum, 0)
-                        # deal with remaining
                         for idx_res, idx_scores in enumerate(unique_indices):
                             cumsum = y_true_sorted_cumsum[idx_scores - 1]
                             tp = num_true_examples - cumsum
@@ -461,11 +466,9 @@ class InsSegEvaluator(HookBase):
                             precision[idx_res] = p
                             recall[idx_res] = r
 
-                        # first point in curve is artificial
                         precision[-1] = 1.0
                         recall[-1] = 0.0
 
-                        # compute average of precision-recall curve
                         recall_for_conv = np.copy(recall)
                         recall_for_conv = np.append(recall_for_conv[0], recall_for_conv)
                         recall_for_conv = np.append(recall_for_conv, 0.0)
@@ -473,7 +476,6 @@ class InsSegEvaluator(HookBase):
                         stepWidths = np.convolve(
                             recall_for_conv, [-0.5, 0, 0.5], "valid"
                         )
-                        # integrate is now simply a dot product
                         ap_current = np.dot(precision, stepWidths)
 
                     elif has_gt:
@@ -510,7 +512,7 @@ class InsSegEvaluator(HookBase):
         for i, input_dict in enumerate(self.trainer.val_loader):
             assert (
                 len(input_dict["offset"]) == 1
-            )  # currently only support bs 1 for each GPU
+            )  # 현재 GPU당 배치 크기 1만 지원합니다.
             for key in input_dict.keys():
                 if isinstance(input_dict[key], torch.Tensor):
                     input_dict[key] = input_dict[key].cuda(non_blocking=True)
@@ -521,7 +523,7 @@ class InsSegEvaluator(HookBase):
 
             segment = input_dict["segment"]
             instance = input_dict["instance"]
-            # map to origin
+            # 원래 좌표로 매핑
             if "origin_coord" in input_dict.keys():
                 idx, _ = pointops.knn_query(
                     1,
@@ -577,5 +579,5 @@ class InsSegEvaluator(HookBase):
             self.trainer.writer.add_scalar("val/AP50", all_ap_50, current_epoch)
             self.trainer.writer.add_scalar("val/AP25", all_ap_25, current_epoch)
         self.trainer.logger.info("<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<")
-        self.trainer.comm_info["current_metric_value"] = all_ap_50  # save for saver
-        self.trainer.comm_info["current_metric_name"] = "AP50"  # save for saver
+        self.trainer.comm_info["current_metric_value"] = all_ap_50  # saver에 저장
+        self.trainer.comm_info["current_metric_name"] = "AP50"  # saver에 저장
