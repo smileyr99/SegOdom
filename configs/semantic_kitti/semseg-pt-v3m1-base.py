@@ -69,34 +69,28 @@ model = dict(
     # Pose Estimation을 위한 MLP head 추가
     pose_head=dict(
         type="PoseHead",
-        in_channels=1062,  # (512 + 19) * 2
-        
-        # Rotation MLP
-        rotation_mlp=dict(
-            in_features=1062,
-            hidden_features=100,
-            out_features=4,    # quaternion rotation (x,y,z,w)
-            activation="relu"
-        ),
-        
-        # Translation MLP
-        translation_mlp=dict(
-            in_features=1062,
-            hidden_features=100,
-            out_features=3,    # translation (x,y,z)
-            activation="relu"
-        )
+        in_features=1062,      # (512 + 19) * 2
+        hidden_features=100,   # 중간 레이어 차원
+        activation='relu'      # 활성화 함수
     ),
     criteria=[
+        # Segmentation Loss
         dict(type="CrossEntropyLoss",
-             weight=[3.1557, 8.7029, 7.8281, 6.1354, 6.3161, 7.9937, 8.9704, 10.1922, 1.6155, 4.2187,
-                     1.9385, 5.5455, 2.0198, 2.6261, 1.3212, 5.1102, 2.5492, 5.8585, 7.3929],
-             loss_weight=1.0,
-             ignore_index=-1),
-        dict(type="LovaszLoss", mode="multiclass", loss_weight=1.0, ignore_index=-1),
+            weight=[3.1557, 8.7029, 7.8281, 6.1354, 6.3161, 7.9937, 8.9704, 10.1922, 1.6155, 4.2187,
+                    1.9385, 5.5455, 2.0198, 2.6261, 1.3212, 5.1102, 2.5492, 5.8585, 7.3929],
+            loss_weight=1.0,
+            ignore_index=-1),
+        dict(type="LovaszLoss", 
+            mode="multiclass", 
+            loss_weight=1.0, 
+            ignore_index=-1),
+        # Pose Loss
         dict(type="PoseLoss",
-             rotation_weight=1.0,
-             translation_weight=1.0)
+            rotation_weight=1.0,
+            translation_weight=1.0,
+            static_weight=2.0,        # 정적 라벨 가중치 추가
+            epsilon=1e-6,             # 수치 안정성을 위한 epsilon 추가
+            static_classes=[8, 9, 10, 12, 13, 14, 15, 16, 17, 18])  # 정적 클래스 인덱스
     ],
 )
 

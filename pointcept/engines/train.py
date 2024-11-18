@@ -190,7 +190,7 @@ class Trainer(TrainerBase):
             if scaler <= self.scaler.get_scale():
                 self.scheduler.step()
         else:  # AMP가 비활성화된 경우 일반적인 역전파와 옵티마이저 스텝
-            loss.backward()
+            loss.backward() # 역전파 진행
             self.optimizer.step()
             self.scheduler.step()
         if self.cfg.empty_cache:
